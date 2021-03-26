@@ -1,10 +1,13 @@
 use std::sync::Arc;
 
+use image::{ImageBuffer, Rgba};
 use vulkano::{
     buffer::{BufferUsage, CpuAccessibleBuffer},
     command_buffer::{AutoCommandBufferBuilder, CommandBuffer},
     descriptor::{descriptor_set::PersistentDescriptorSet, PipelineLayoutAbstract},
     device::{Device, DeviceExtensions, Features},
+    format::{ClearValue, Format},
+    image::{Dimensions, StorageImage},
     instance::{Instance, InstanceExtensions, PhysicalDevice, QueueFamily},
     pipeline::{shader::SpecializationConstants, ComputePipeline},
     sync::GpuFuture,
@@ -43,9 +46,24 @@ fn main() {
 
     let queue = queues.next().unwrap();
 
-    let data_buffer =
-        CpuAccessibleBuffer::from_iter(device.clone(), BufferUsage::all(), false, 0..65536)
-            .expect("failed to create buffer");
+    let image_buffer = CpuAccessibleBuffer::from_iter(
+        device.clone(),
+        BufferUsage::all(),
+        false,
+        (0..1024 * 1024 * 4).map(|_| 0u8),
+    )
+    .expect("failed to create buffer");
+
+    let image = StorageImage::new(
+        device.clone(),
+        Dimensions::Dim2d {
+            width: 1024,
+            height: 1024,
+        },
+        Format::R8G8B8A8Unorm,
+        Some(queue.family()),
+    )
+    .unwrap();
 
     let shader = cs::Shader::load(device.clone()).expect("failed to create shader");
 
@@ -58,7 +76,7 @@ fn main() {
 
     let set = Arc::new(
         PersistentDescriptorSet::start(layout.clone())
-            .add_buffer(data_buffer.clone())
+            .add_image(image.clone())
             .unwrap()
             .build()
             .unwrap(),
@@ -66,13 +84,17 @@ fn main() {
 
     let mut builder = AutoCommandBufferBuilder::new(device.clone(), queue.family()).unwrap();
     builder
+        .clear_color_image(image.clone(), ClearValue::Float([0.0, 0.0, 0.0, 0.0]))
+        .unwrap()
         .dispatch(
-            [1024, 1, 1],
+            [1024 / 8, 1024 / 8, 1],
             compute_pipeline.clone(),
             set.clone(),
             (),
             None,
         )
+        .unwrap()
+        .copy_image_to_buffer(image.clone(), image_buffer.clone())
         .unwrap();
 
     let command_buffer = builder.build().unwrap();
@@ -85,10 +107,7 @@ fn main() {
         .wait(None)
         .unwrap();
 
-    let content = data_buffer.read().unwrap();
-    for (n, val) in content.iter().enumerate() {
-        assert_eq!(*val, n as u32 * 12);
-    }
-
-    println!("Everything succeeded!");
+    let image_content = image_buffer.read().unwrap();
+    let image = ImageBuffer::<Rgba<u8>, _>::from_raw(1024, 1024, &image_content[..]).unwrap();
+    image.save("image.png").unwrap();
 }
