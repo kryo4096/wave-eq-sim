@@ -1,6 +1,6 @@
-use std::error::Error;
-use std::sync::Arc;
 use std::vec::Vec;
+use std::{error::Error, time::Instant};
+use std::{sync::Arc, thread, time::Duration};
 
 use vulkano::{
     buffer::{BufferUsage, CpuAccessibleBuffer},
@@ -21,35 +21,36 @@ use vulkano::{
 };
 use vulkano_win::VkSurfaceBuild;
 use winit::{
-    event::{Event, WindowEvent},
+    dpi::PhysicalSize,
+    event::{ElementState, Event, KeyboardInput, MouseButton, VirtualKeyCode, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     window::{Window, WindowBuilder},
 };
 
 mod cs {
-    const _RECOMPILE_DUMMY: &str = include_str!("../res/shaders/compute.glsl");
+    const _RECOMPILE_DUMMY: &str = include_str!("../res/shaders/compute.comp.glsl");
 
     vulkano_shaders::shader! {
         ty: "compute",
-        path: "res/shaders/compute.glsl"
+        path: "res/shaders/compute.comp.glsl"
     }
 }
 
 mod vs {
-    const _RECOMPILE_DUMMY: &str = include_str!("../res/shaders/vertex.glsl");
+    const _RECOMPILE_DUMMY: &str = include_str!("../res/shaders/vertex.vert.glsl");
 
     vulkano_shaders::shader! {
         ty: "vertex",
-        path: "res/shaders/vertex.glsl"
+        path: "res/shaders/vertex.vert.glsl"
     }
 }
 
 mod fs {
-    const _RECOMPILE_DUMMY: &str = include_str!("../res/shaders/fragment.glsl");
+    const _RECOMPILE_DUMMY: &str = include_str!("../res/shaders/fragment.frag.glsl");
 
     vulkano_shaders::shader! {
         ty: "fragment",
-        path: "res/shaders/fragment.glsl"
+        path: "res/shaders/fragment.frag.glsl"
     }
 }
 
@@ -87,9 +88,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let events_loop = EventLoop::new();
     let surface = WindowBuilder::new()
+        .with_inner_size(PhysicalSize::new(1024, 1024))
         .with_resizable(false)
-        .build_vk_surface(&events_loop, instance.clone())
-        .unwrap();
+        .with_title("Wave Equation (Click and Drag to apply force to pixels)")
+        .build_vk_surface(&events_loop, instance.clone())?;
 
     let queue_family = physical
         .queue_families()
@@ -98,7 +100,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let (device, mut queues) = Device::new(
         physical,
-        &Features::none(),
+        &Features {
+            shader_storage_image_extended_formats: true,
+            ..Features::none()
+        },
         &DeviceExtensions {
             khr_storage_buffer_storage_class: true,
             khr_swapchain: true,
@@ -112,11 +117,15 @@ fn main() -> Result<(), Box<dyn Error>> {
         .capabilities(physical)
         .expect("failed to get surface capabilities");
 
-    let queue = queues.next().unwrap();
+    let queue = queues.next().ok_or("failed to get queue")?;
 
     let dimensions: [u32; 2] = surface.window().inner_size().into();
     let (mut swapchain, images) = {
-        let alpha = caps.supported_composite_alpha.iter().next().unwrap();
+        let alpha = caps
+            .supported_composite_alpha
+            .iter()
+            .next()
+            .ok_or("failed to get alpha channel")?;
         let format = caps.supported_formats[0].0;
 
         Swapchain::new(
@@ -143,8 +152,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         BufferUsage::all(),
         false,
         std::array::IntoIter::new(SCREEN_QUAD),
-    )
-    .unwrap();
+    )?;
 
     let cs = cs::Shader::load(device.clone()).expect("failed to create shader");
 
@@ -153,39 +161,25 @@ fn main() -> Result<(), Box<dyn Error>> {
             .expect("failed to create compute pipeline"),
     );
 
-    let compute_layout = compute_pipeline.layout().descriptor_set_layout(0).unwrap();
+    let compute_layout = compute_pipeline
+        .layout()
+        .descriptor_set_layout(0)
+        .ok_or("unable to get compute layout")?;
 
     let image = StorageImage::with_usage(
         device.clone(),
         Dimensions::Dim2d {
-            width: dimensions[0] / 16,
-            height: dimensions[1] / 16,
+            width: dimensions[0] / 4,
+            height: dimensions[1] / 4,
         },
-        Format::R8G8B8A8Unorm,
+        Format::R32G32Sfloat,
         ImageUsage {
             sampled: true,
             storage: true,
             ..ImageUsage::none()
         },
         Some(queue.family()),
-    )
-    .unwrap();
-
-    let velocity_image = StorageImage::with_usage(
-        device.clone(),
-        Dimensions::Dim2d {
-            width: dimensions[0] / 16,
-            height: dimensions[1] / 16,
-        },
-        Format::R8G8B8A8Unorm,
-        ImageUsage {
-            sampled: true,
-            storage: true,
-            ..ImageUsage::none()
-        },
-        Some(queue.family()),
-    )
-    .unwrap();
+    )?;
 
     let sampler = Sampler::new(
         device.clone(),
@@ -199,40 +193,32 @@ fn main() -> Result<(), Box<dyn Error>> {
         1.0,
         0.0,
         0.0,
-    )
-    .unwrap();
+    )?;
 
     let compute_set = Arc::new(
         PersistentDescriptorSet::start(compute_layout.clone())
-            .add_image(image.clone())
-            .unwrap()
-            .add_image(velocity_image.clone())
-            .unwrap()
-            .build()
-            .unwrap(),
+            .add_image(image.clone())?
+            .build()?,
     );
 
     let vertex_shader = vs::Shader::load(device.clone()).expect("failed to create vertex shader");
     let fragment_shader =
         fs::Shader::load(device.clone()).expect("failed to create fragment shader");
 
-    let render_pass = Arc::new(
-        vulkano::single_pass_renderpass!(device.clone(),
-            attachments: {
-                color: {
-                    load: Clear,
-                    store: Store,
-                    format: swapchain.format(),
-                    samples: 1,
-                }
-            },
-            pass: {
-                color: [color],
-                depth_stencil: {}
+    let render_pass = Arc::new(vulkano::single_pass_renderpass!(device.clone(),
+        attachments: {
+            color: {
+                load: Clear,
+                store: Store,
+                format: swapchain.format(),
+                samples: 1,
             }
-        )
-        .unwrap(),
-    );
+        },
+        pass: {
+            color: [color],
+            depth_stencil: {}
+        }
+    )?);
 
     let pipeline = Arc::new(
         GraphicsPipeline::start()
@@ -242,18 +228,15 @@ fn main() -> Result<(), Box<dyn Error>> {
             .viewports_dynamic_scissors_irrelevant(1)
             .fragment_shader(fragment_shader.main_entry_point(), ())
             .render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
-            .build(device.clone())
-            .unwrap(),
+            .build(device.clone())?,
     );
 
     let render_layout = pipeline.layout().descriptor_set_layout(0).unwrap();
 
     let render_set = Arc::new(
         PersistentDescriptorSet::start(render_layout.clone())
-            .add_sampled_image(image.clone(), sampler.clone())
-            .unwrap()
-            .build()
-            .unwrap(),
+            .add_sampled_image(image.clone(), sampler.clone())?
+            .build()?,
     );
 
     let mut dynamic_state = DynamicState::none();
@@ -264,6 +247,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut recreate_swapchain = true;
 
     let mut previous_frame_end = Some(sync::now(device.clone()).boxed());
+
+    let mut last_frame_time = Instant::now();
+
+    let mut init_image = true;
+
+    let mut mouse_pressed = false;
+
+    let mut mouse_pos = [0., 0.];
+    let mut wave_pos = [0., 0.];
 
     events_loop.run(move |event, _, control_flow| match event {
         Event::WindowEvent {
@@ -278,8 +270,51 @@ fn main() -> Result<(), Box<dyn Error>> {
         } => {
             recreate_swapchain = true;
         }
+        Event::WindowEvent {
+            event: WindowEvent::MouseInput { state, button, .. },
+            ..
+        } => {
+            if button == MouseButton::Left {
+                match state {
+                    ElementState::Pressed => {
+                        mouse_pressed = true;
+                        wave_pos = mouse_pos;
+                    }
+                    ElementState::Released => mouse_pressed = false,
+                }
+            }
+        }
+        Event::WindowEvent {
+            event: WindowEvent::CursorMoved { position, .. },
+            ..
+        } => {
+            mouse_pos = [
+                position.x as f32 / dimensions[0] as f32,
+                position.y as f32 / dimensions[1] as f32,
+            ]
+        }
+        Event::WindowEvent {
+            event:
+                WindowEvent::KeyboardInput {
+                    input:
+                        KeyboardInput {
+                            virtual_keycode,
+                            state,
+                            ..
+                        },
+                    ..
+                },
+            ..
+        } => {
+            if virtual_keycode == Some(VirtualKeyCode::R) && state == ElementState::Pressed {
+                init_image = true;
+            }
+        }
         Event::RedrawEventsCleared => {
             previous_frame_end.as_mut().unwrap().cleanup_finished();
+
+            let delta_time = Instant::now() - last_frame_time;
+            last_frame_time = Instant::now();
 
             if recreate_swapchain {
                 let dimensions: [u32; 2] = surface.window().inner_size().into();
@@ -302,6 +337,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                 recreate_swapchain = false;
             }
 
+            wave_pos[0] += (mouse_pos[0] - wave_pos[0]) * delta_time.as_secs_f32() * 3.;
+            wave_pos[1] += (mouse_pos[1] - wave_pos[1]) * delta_time.as_secs_f32() * 3.;
+
             let (image_num, suboptimal, acquire_future) =
                 match swapchain::acquire_next_image(swapchain.clone(), None) {
                     Ok(r) => r,
@@ -322,7 +360,16 @@ fn main() -> Result<(), Box<dyn Error>> {
                 AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue.family())
                     .unwrap();
 
-            let uniforms = fs::ty::PushConstantData {
+            let compute_uniforms = cs::ty::PushConstantData {
+                delta_time: delta_time.as_secs_f32(),
+                init_image: init_image as _,
+                touch_coords: wave_pos,
+                touch_force: if mouse_pressed { 10000. } else { 0. },
+            };
+
+            init_image = false;
+
+            let render_uniforms = fs::ty::PushConstantData {
                 color: [1.0, 1.0, 1.0],
             };
 
@@ -331,7 +378,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     [128, 128, 1],
                     compute_pipeline.clone(),
                     compute_set.clone(),
-                    (),
+                    compute_uniforms,
                     vec![],
                 )
                 .unwrap()
@@ -346,7 +393,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     &dynamic_state,
                     vertex_buffer.clone(),
                     render_set.clone(),
-                    uniforms,
+                    render_uniforms,
                     vec![],
                 )
                 .unwrap()
@@ -377,11 +424,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                     previous_frame_end = Some(sync::now(device.clone()).boxed());
                 }
             }
+
+            println!("fps: {:?}", 1. / delta_time.as_secs_f32());
         }
         _ => (),
     });
-
-    Ok(())
 }
 
 fn window_size_dependent_setup(
