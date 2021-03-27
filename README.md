@@ -1,3 +1,3 @@
-#Wave Equation Simulation
+# Wave Equation Simulation
 
 Scuffed wave equation simulator (completely mathematically unsound)
