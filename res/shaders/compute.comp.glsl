@@ -37,13 +37,13 @@ void main() {
         }
         vec4 pixel = imageLoad(img, pos);
         
-        pixel.x += (4*l) * uniforms.delta_time;
+        pixel.y += (16*l - 0.05 * pixel.y) * uniforms.delta_time;
         
         if(ivec2(uniforms.touch_coords * bounds) == pos) {
-            pixel.x += uniforms.touch_force * uniforms.delta_time;
+            pixel.y += uniforms.touch_force * uniforms.delta_time;
         } 
 
-        //pixel.x += pixel.y * uniforms.delta_time;
+        pixel.x += pixel.y * uniforms.delta_time;
 
 
         retirePhase();
