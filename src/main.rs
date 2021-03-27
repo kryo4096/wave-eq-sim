@@ -24,7 +24,7 @@ use winit::{
     dpi::PhysicalSize,
     event::{ElementState, Event, KeyboardInput, MouseButton, VirtualKeyCode, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
-    window::{Window, WindowBuilder},
+    window::{Fullscreen, Window, WindowBuilder},
 };
 
 mod cs {
@@ -88,9 +88,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let events_loop = EventLoop::new();
     let surface = WindowBuilder::new()
-        .with_inner_size(PhysicalSize::new(1024, 1024))
+        .with_inner_size(PhysicalSize::new(1920, 1080))
         .with_resizable(false)
         .with_title("Wave Equation (Click and Drag to apply force to pixels)")
+        .with_fullscreen(Some(Fullscreen::Borderless(None)))
         .build_vk_surface(&events_loop, instance.clone())?;
 
     let queue_family = physical
@@ -169,8 +170,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let image = StorageImage::with_usage(
         device.clone(),
         Dimensions::Dim2d {
-            width: dimensions[0] / 4,
-            height: dimensions[1] / 4,
+            width: dimensions[0] / 8,
+            height: dimensions[1] / 8,
         },
         Format::R32G32Sfloat,
         ImageUsage {
@@ -308,6 +309,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         } => {
             if virtual_keycode == Some(VirtualKeyCode::R) && state == ElementState::Pressed {
                 init_image = true;
+            }
+
+            if virtual_keycode == Some(VirtualKeyCode::Escape) {
+                *control_flow = ControlFlow::Exit;
             }
         }
         Event::RedrawEventsCleared => {
