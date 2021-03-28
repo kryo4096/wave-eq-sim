@@ -35,11 +35,8 @@ void main() {
 
     if(uniforms.init_image) {
         imageStore(img, pos, 2 * vec4(random(pos),random(pos + 1000)*200-100,0,0));
-    }
-
-    retirePhase();
-
-    
+        retirePhase();
+    }    
 
     if(pos.x > 0 && pos.y > 0 && pos.x < bounds.x-1 && pos.y < bounds.y-1) {
 
@@ -59,7 +56,7 @@ void main() {
             
         
 
-            pixel.y += (500*l - 0.0 * pixel.y) * dt;
+            pixel.y += (500*l - 0.003 * pixel.y) * dt;
             
             if(ivec2(uniforms.touch_coords * bounds) == pos) {
                 pixel.y += uniforms.touch_force * dt * 20;

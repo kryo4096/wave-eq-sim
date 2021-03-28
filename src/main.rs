@@ -170,8 +170,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let image = StorageImage::with_usage(
         device.clone(),
         Dimensions::Dim2d {
-            width: dimensions[0] / 8,
-            height: dimensions[1] / 8,
+            width: dimensions[0] / 2,
+            height: dimensions[1] / 2,
         },
         Format::R32G32Sfloat,
         ImageUsage {
@@ -184,8 +184,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let sampler = Sampler::new(
         device.clone(),
-        Filter::Nearest,
-        Filter::Nearest,
+        Filter::Linear,
+        Filter::Linear,
         MipmapMode::Nearest,
         SamplerAddressMode::Repeat,
         SamplerAddressMode::Repeat,
@@ -255,6 +255,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut mouse_pressed = false;
 
+    let mut force_mult = 1.;
+
     let mut mouse_pos = [0., 0.];
     let mut wave_pos = [0., 0.];
 
@@ -274,17 +276,19 @@ fn main() -> Result<(), Box<dyn Error>> {
         Event::WindowEvent {
             event: WindowEvent::MouseInput { state, button, .. },
             ..
-        } => {
-            if button == MouseButton::Left {
-                match state {
-                    ElementState::Pressed => {
-                        mouse_pressed = true;
-                        wave_pos = mouse_pos;
-                    }
-                    ElementState::Released => mouse_pressed = false,
+        } => match state {
+            ElementState::Pressed => {
+                mouse_pressed = true;
+                wave_pos = mouse_pos;
+
+                match button {
+                    MouseButton::Left => force_mult = 1.,
+                    MouseButton::Right => force_mult = -1.,
+                    _ => (),
                 }
             }
-        }
+            ElementState::Released => mouse_pressed = false,
+        },
         Event::WindowEvent {
             event: WindowEvent::CursorMoved { position, .. },
             ..
@@ -369,7 +373,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                 delta_time: delta_time.as_secs_f32(),
                 init_image: init_image as _,
                 touch_coords: wave_pos,
-                touch_force: if mouse_pressed { 10000. } else { 0. },
+                touch_force: if mouse_pressed {
+                    10000. * force_mult
+                } else {
+                    0.
+                },
             };
 
             init_image = false;
