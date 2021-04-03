@@ -41,7 +41,7 @@ void main() {
         }  else { 
 
 
-        int time_res = 100;
+        int time_res = 20;
 
         float dt = uniforms.delta_time / time_res;
 

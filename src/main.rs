@@ -76,7 +76,7 @@ const SCREEN_QUAD: [Vertex; 6] = [
     Vertex::new(1., 1.),
 ];
 
-const IMAGE_RESOLUTION: u32 = 1;
+const IMAGE_RESOLUTION: u32 = 4;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let instance = {
@@ -92,10 +92,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let events_loop = EventLoop::new();
     let surface = WindowBuilder::new()
-        .with_inner_size(PhysicalSize::new(2560, 1440))
+        .with_inner_size(PhysicalSize::new(1024, 1024))
         .with_resizable(false)
         .with_title("Wave Equation (Click and Drag to apply force to pixels)")
-        .with_fullscreen(Some(Fullscreen::Borderless(None)))
         .build_vk_surface(&events_loop, instance.clone())?;
 
     let queue_family = physical
