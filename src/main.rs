@@ -385,7 +385,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .unwrap();
 
             let compute_uniforms = cs::ty::PushConstantData {
-                delta_time: delta_time.as_secs_f32(),
+                delta_time: 1. / 60.,
                 init_image: init_image as _,
                 touch_coords: wave_pos,
                 touch_force: if mouse_pressed { force_mult } else { 0. },
@@ -456,6 +456,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             if mouse_pressed {
                 dbg!(mouse_pos);
             }
+
+
         }
         _ => (),
     });

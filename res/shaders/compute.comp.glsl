@@ -17,7 +17,7 @@ layout(push_constant) uniform PushConstantData {
 
 layout(set = 0, binding = 0, rg32f) uniform image2D img;
 
-const mat3 laplacian = mat3(0,1,0,1,-4,1,0,1,0);
+const mat3 laplacian = mat3(1,1,1,1,-8,1,1,1,1);
 
 highp float random(vec2 co)
 {
@@ -56,7 +56,7 @@ void main() {
 
                 vec4 pixel = imageLoad(img, pos);
 
-                pixel.y += (1000*l) * dt;
+                pixel.y += (1000*l - 0.2 * pixel.y) * dt;
                 
                 if(ivec2(uniforms.touch_coords * bounds) == pos) {
                     pixel.y += uniforms.touch_force * dt * 2000;
