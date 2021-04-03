@@ -20,9 +20,8 @@ use vulkano::{
     },
     sync::{self, FlushError, GpuFuture},
 };
-use vulkano_win::{create_vk_surface, VkSurfaceBuild};
+use vulkano_win::VkSurfaceBuild;
 use winit::{
-    dpi::PhysicalSize,
     event::{ElementState, Event, KeyboardInput, MouseButton, VirtualKeyCode, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     window::{Fullscreen, Window, WindowBuilder},
@@ -110,9 +109,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     let caps = surface
         .capabilities(physical)
         .expect("failed to get surface capabilities");
-
-    dbg!(dimensions);
-    dbg!(caps.current_extent);
 
     let queue_family = physical
         .queue_families()
