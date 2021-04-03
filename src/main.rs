@@ -4,10 +4,10 @@ use std::{sync::Arc, thread, time::Duration};
 
 use vulkano::{
     buffer::{BufferUsage, CpuAccessibleBuffer},
-    command_buffer::{AutoCommandBufferBuilder, DynamicState, SubpassContents},
+    command_buffer::{AutoCommandBufferBuilder, CommandBuffer, DynamicState, SubpassContents},
     descriptor::{descriptor_set::PersistentDescriptorSet, PipelineLayoutAbstract},
     device::{Device, DeviceExtensions, Features},
-    format::Format,
+    format::{ClearValue, Format},
     framebuffer::{Framebuffer, FramebufferAbstract, RenderPassAbstract, Subpass},
     image::{Dimensions, ImageUsage, ImageViewAccess, StorageImage, SwapchainImage},
     instance::{Instance, PhysicalDevice},
@@ -76,6 +76,8 @@ const SCREEN_QUAD: [Vertex; 6] = [
     Vertex::new(1., 1.),
 ];
 
+const IMAGE_RESOLUTION: u32 = 1;
+
 fn main() -> Result<(), Box<dyn Error>> {
     let instance = {
         let extensions = vulkano_win::required_extensions();
@@ -86,9 +88,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         .next()
         .expect("no device available");
 
+    dbg!(physical.name());
+
     let events_loop = EventLoop::new();
     let surface = WindowBuilder::new()
-        .with_inner_size(PhysicalSize::new(1920, 1080))
+        .with_inner_size(PhysicalSize::new(2560, 1440))
         .with_resizable(false)
         .with_title("Wave Equation (Click and Drag to apply force to pixels)")
         .with_fullscreen(Some(Fullscreen::Borderless(None)))
@@ -170,13 +174,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     let image = StorageImage::with_usage(
         device.clone(),
         Dimensions::Dim2d {
-            width: dimensions[0] / 2,
-            height: dimensions[1] / 2,
+            width: dimensions[0] / IMAGE_RESOLUTION,
+            height: dimensions[1] / IMAGE_RESOLUTION,
         },
         Format::R32G32Sfloat,
         ImageUsage {
             sampled: true,
             storage: true,
+            transfer_destination: true,
             ..ImageUsage::none()
         },
         Some(queue.family()),
@@ -184,8 +189,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let sampler = Sampler::new(
         device.clone(),
-        Filter::Linear,
-        Filter::Linear,
+        Filter::Nearest,
+        Filter::Nearest,
         MipmapMode::Nearest,
         SamplerAddressMode::Repeat,
         SamplerAddressMode::Repeat,
@@ -259,6 +264,17 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut mouse_pos = [0., 0.];
     let mut wave_pos = [0., 0.];
+
+    let mut clear_builder =
+        AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue.family())?;
+
+    clear_builder.clear_color_image(image.clone(), ClearValue::Float([0.0; 4]))?;
+
+    let mut clear_command = clear_builder.build()?;
+
+    let _ = clear_command
+        .execute(queue.clone())?
+        .then_signal_fence_and_flush()?;
 
     events_loop.run(move |event, _, control_flow| match event {
         Event::WindowEvent {
@@ -373,11 +389,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 delta_time: delta_time.as_secs_f32(),
                 init_image: init_image as _,
                 touch_coords: wave_pos,
-                touch_force: if mouse_pressed {
-                    10000. * force_mult
-                } else {
-                    0.
-                },
+                touch_force: if mouse_pressed { force_mult } else { 0. },
             };
 
             init_image = false;
@@ -388,7 +400,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             builder
                 .dispatch(
-                    [128, 128, 1],
+                    [
+                        dimensions[0] / IMAGE_RESOLUTION / 8,
+                        dimensions[0] / IMAGE_RESOLUTION / 8,
+                        1,
+                    ],
                     compute_pipeline.clone(),
                     compute_set.clone(),
                     compute_uniforms,
@@ -438,7 +454,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
 
-            println!("fps: {:?}", 1. / delta_time.as_secs_f32());
+            if mouse_pressed {
+                dbg!(mouse_pos);
+            }
         }
         _ => (),
     });

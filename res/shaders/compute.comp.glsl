@@ -33,44 +33,44 @@ void main() {
     ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
     ivec2 bounds = imageSize(img);
 
-    if(uniforms.init_image) {
-        imageStore(img, pos, 2 * vec4(random(pos),random(pos + 1000)*200-100,0,0));
-        retirePhase();
-    }    
-
     if(pos.x > 0 && pos.y > 0 && pos.x < bounds.x-1 && pos.y < bounds.y-1) {
 
+        if(uniforms.init_image) {
+            imageStore(img, pos, vec4(0));
 
-        int time_res = 50;
+        }  else { 
+
+
+        int time_res = 100;
 
         float dt = uniforms.delta_time / time_res;
 
-        for(int i = 0; i < time_res; i++) {
-            float l = 0;
-            for(int i = -1; i <= 1; i++) {
-                for(int j = -1; j <= 1; j++) {
-                    l += imageLoad(img, ivec2(pos.x + i, pos.y + j)).x * laplacian[i+1][j+1]; 
+            for(int i = 0; i < time_res; i++) {
+                float l = 0;
+
+                for(int i = -1; i <= 1; i++) {
+                    for(int j = -1; j <= 1; j++) {
+                        l += imageLoad(img, ivec2(pos.x + i, pos.y + j)).x * laplacian[i+1][j+1]; 
+                    }
                 }
+
+                vec4 pixel = imageLoad(img, pos);
+
+                pixel.y += (1000*l) * dt;
+                
+                if(ivec2(uniforms.touch_coords * bounds) == pos) {
+                    pixel.y += uniforms.touch_force * dt * 2000;
+                } 
+
+                pixel.x += pixel.y * dt;
+
+                memoryBarrierShared(); barrier();
+
+                
+                imageStore(img, pos, pixel);
             }
-            vec4 pixel = imageLoad(img, pos);
             
-        
+            }
 
-            pixel.y += (500*l - 0.003 * pixel.y) * dt;
-            
-            if(ivec2(uniforms.touch_coords * bounds) == pos) {
-                pixel.y += uniforms.touch_force * dt * 20;
-            } 
-
-            pixel.x += pixel.y * dt;
-
-             retirePhase();
-
-            imageStore(img, pos, pixel);
-
-        }
-
-
-       
     }
 }
