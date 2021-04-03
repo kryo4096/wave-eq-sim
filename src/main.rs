@@ -1,6 +1,7 @@
+use std::mem;
+use std::sync::Arc;
 use std::vec::Vec;
 use std::{error::Error, time::Instant};
-use std::{sync::Arc, thread, time::Duration};
 
 use vulkano::{
     buffer::{BufferUsage, CpuAccessibleBuffer},
@@ -19,7 +20,7 @@ use vulkano::{
     },
     sync::{self, FlushError, GpuFuture},
 };
-use vulkano_win::VkSurfaceBuild;
+use vulkano_win::{create_vk_surface, VkSurfaceBuild};
 use winit::{
     dpi::PhysicalSize,
     event::{ElementState, Event, KeyboardInput, MouseButton, VirtualKeyCode, WindowEvent},
@@ -76,7 +77,8 @@ const SCREEN_QUAD: [Vertex; 6] = [
     Vertex::new(1., 1.),
 ];
 
-const IMAGE_RESOLUTION: u32 = 4;
+const IMAGE_RESOLUTION: u32 = 1;
+const TIME_STEPS_PER_FRAME: u32 = 40;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let instance = {
@@ -91,11 +93,26 @@ fn main() -> Result<(), Box<dyn Error>> {
     dbg!(physical.name());
 
     let events_loop = EventLoop::new();
+
+    let size = events_loop
+        .primary_monitor()
+        .ok_or("no monitor found")?
+        .size();
+
     let surface = WindowBuilder::new()
-        .with_inner_size(PhysicalSize::new(1024, 1024))
-        .with_resizable(false)
+        .with_inner_size(size)
+        .with_fullscreen(Some(Fullscreen::Borderless(events_loop.primary_monitor())))
         .with_title("Wave Equation (Click and Drag to apply force to pixels)")
         .build_vk_surface(&events_loop, instance.clone())?;
+
+    let dimensions: [u32; 2] = surface.window().inner_size().into();
+
+    let caps = surface
+        .capabilities(physical)
+        .expect("failed to get surface capabilities");
+
+    dbg!(dimensions);
+    dbg!(caps.current_extent);
 
     let queue_family = physical
         .queue_families()
@@ -117,13 +134,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     )
     .expect("failed to create device");
 
-    let caps = surface
-        .capabilities(physical)
-        .expect("failed to get surface capabilities");
-
     let queue = queues.next().ok_or("failed to get queue")?;
 
-    let dimensions: [u32; 2] = surface.window().inner_size().into();
     let (mut swapchain, images) = {
         let alpha = caps
             .supported_composite_alpha
@@ -165,12 +177,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             .expect("failed to create compute pipeline"),
     );
 
-    let compute_layout = compute_pipeline
-        .layout()
-        .descriptor_set_layout(0)
-        .ok_or("unable to get compute layout")?;
-
-    let image = StorageImage::with_usage(
+    let image1 = StorageImage::with_usage(
         device.clone(),
         Dimensions::Dim2d {
             width: dimensions[0] / IMAGE_RESOLUTION,
@@ -181,6 +188,22 @@ fn main() -> Result<(), Box<dyn Error>> {
             sampled: true,
             storage: true,
             transfer_destination: true,
+            ..ImageUsage::none()
+        },
+        Some(queue.family()),
+    )?;
+
+    let image2 = StorageImage::with_usage(
+        device.clone(),
+        Dimensions::Dim2d {
+            width: dimensions[0] / IMAGE_RESOLUTION,
+            height: dimensions[1] / IMAGE_RESOLUTION,
+        },
+        Format::R32G32Sfloat,
+        ImageUsage {
+            storage: true,
+            transfer_destination: true,
+            sampled: true,
             ..ImageUsage::none()
         },
         Some(queue.family()),
@@ -199,12 +222,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         0.0,
         0.0,
     )?;
-
-    let compute_set = Arc::new(
-        PersistentDescriptorSet::start(compute_layout.clone())
-            .add_image(image.clone())?
-            .build()?,
-    );
 
     let vertex_shader = vs::Shader::load(device.clone()).expect("failed to create vertex shader");
     let fragment_shader =
@@ -236,13 +253,25 @@ fn main() -> Result<(), Box<dyn Error>> {
             .build(device.clone())?,
     );
 
-    let render_layout = pipeline.layout().descriptor_set_layout(0).unwrap();
+    {
+        let mut clear_builder =
+            AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue.family())
+                .unwrap();
 
-    let render_set = Arc::new(
-        PersistentDescriptorSet::start(render_layout.clone())
-            .add_sampled_image(image.clone(), sampler.clone())?
-            .build()?,
-    );
+        clear_builder
+            .clear_color_image(image1.clone(), ClearValue::Float([0.0; 4]))
+            .unwrap()
+            .clear_color_image(image2.clone(), ClearValue::Float([0.0; 4]))
+            .unwrap();
+
+        let commands = clear_builder.build().unwrap();
+
+        let _ = commands
+            .execute(queue.clone())
+            .unwrap()
+            .then_signal_fence_and_flush()
+            .unwrap();
+    }
 
     let mut dynamic_state = DynamicState::none();
 
@@ -255,8 +284,6 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut last_frame_time = Instant::now();
 
-    let mut init_image = true;
-
     let mut mouse_pressed = false;
 
     let mut force_mult = 1.;
@@ -264,16 +291,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut mouse_pos = [0., 0.];
     let mut wave_pos = [0., 0.];
 
-    let mut clear_builder =
-        AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue.family())?;
-
-    clear_builder.clear_color_image(image.clone(), ClearValue::Float([0.0; 4]))?;
-
-    let mut clear_command = clear_builder.build()?;
-
-    let _ = clear_command
-        .execute(queue.clone())?
-        .then_signal_fence_and_flush()?;
+    let mut clear_images = true;
+    let mut render_image = image2;
+    let mut back_image = image1;
 
     events_loop.run(move |event, _, control_flow| match event {
         Event::WindowEvent {
@@ -327,7 +347,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             ..
         } => {
             if virtual_keycode == Some(VirtualKeyCode::R) && state == ElementState::Pressed {
-                init_image = true;
+                clear_images = true;
             }
 
             if virtual_keycode == Some(VirtualKeyCode::Escape) {
@@ -380,36 +400,65 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             let clear_values = vec![[0.0, 0.0, 0.0, 1.0].into()];
 
-            let mut builder =
-                AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue.family())
-                    .unwrap();
+            let compute_layout = compute_pipeline
+                .layout()
+                .descriptor_set_layout(0)
+                .ok_or("unable to get compute layout")
+                .unwrap();
+            let render_layout = pipeline.layout().descriptor_set_layout(0).unwrap();
 
             let compute_uniforms = cs::ty::PushConstantData {
-                delta_time: 1. / 60.,
-                init_image: init_image as _,
+                delta_time: delta_time.as_secs_f32() / TIME_STEPS_PER_FRAME as f32,
+                init_image: clear_images as _,
                 touch_coords: wave_pos,
                 touch_force: if mouse_pressed { force_mult } else { 0. },
             };
 
-            init_image = false;
+            let render_set = Arc::new(
+                PersistentDescriptorSet::start(render_layout.clone())
+                    .add_sampled_image(render_image.clone(), sampler.clone())
+                    .unwrap()
+                    .build()
+                    .unwrap(),
+            );
 
             let render_uniforms = fs::ty::PushConstantData {
                 color: [1.0, 1.0, 1.0],
             };
 
+            let mut builder =
+                AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue.family())
+                    .unwrap();
+
+            for _ in 0..TIME_STEPS_PER_FRAME {
+                let compute_set = Arc::new(
+                    PersistentDescriptorSet::start(compute_layout.clone())
+                        .add_image(back_image.clone())
+                        .unwrap()
+                        .add_image(render_image.clone())
+                        .unwrap()
+                        .build()
+                        .unwrap(),
+                );
+
+                builder
+                    .dispatch(
+                        [
+                            dimensions[0] / IMAGE_RESOLUTION / 8,
+                            dimensions[0] / IMAGE_RESOLUTION / 8,
+                            1,
+                        ],
+                        compute_pipeline.clone(),
+                        compute_set.clone(),
+                        compute_uniforms,
+                        vec![],
+                    )
+                    .unwrap();
+
+                mem::swap(&mut render_image, &mut back_image);
+            }
+
             builder
-                .dispatch(
-                    [
-                        dimensions[0] / IMAGE_RESOLUTION / 8,
-                        dimensions[0] / IMAGE_RESOLUTION / 8,
-                        1,
-                    ],
-                    compute_pipeline.clone(),
-                    compute_set.clone(),
-                    compute_uniforms,
-                    vec![],
-                )
-                .unwrap()
                 .begin_render_pass(
                     framebuffers[image_num].clone(),
                     SubpassContents::Inline,
@@ -453,11 +502,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
 
-            if mouse_pressed {
-                dbg!(mouse_pos);
-            }
-
-
+            clear_images = false;
         }
         _ => (),
     });

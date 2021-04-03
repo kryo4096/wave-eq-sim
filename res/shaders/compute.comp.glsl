@@ -15,62 +15,39 @@ layout(push_constant) uniform PushConstantData {
     float touch_force;
 } uniforms;
 
-layout(set = 0, binding = 0, rg32f) uniform image2D img;
+layout(set = 0, binding = 0, rg32f) uniform image2D back_buf;
+layout(set = 0, binding = 1, rg32f) uniform image2D render_buf;
 
-const mat3 laplacian = mat3(1,1,1,1,-8,1,1,1,1);
-
-highp float random(vec2 co)
-{
-    highp float a = 12.9898;
-    highp float b = 78.233;
-    highp float c = 43758.5453;
-    highp float dt= dot(co.xy ,vec2(a,b));
-    highp float sn= mod(dt,3.14);
-    return fract(sin(sn) * c);
-}
+const mat3 laplacian = mat3(0,1,0,1,-4,1,0,1,0);
 
 void main() {
     ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
-    ivec2 bounds = imageSize(img);
+    ivec2 bounds = imageSize(back_buf);
 
-    if(pos.x > 0 && pos.y > 0 && pos.x < bounds.x-1 && pos.y < bounds.y-1) {
+    if(uniforms.init_image) {
+        imageStore(render_buf, pos, vec4(0));
+        imageStore(back_buf, pos, vec4(0));
+    } else if(pos.x > 0 && pos.y > 0 && pos.x < bounds.x-1 && pos.y < bounds.y-1) {
 
-        if(uniforms.init_image) {
-            imageStore(img, pos, vec4(0));
+        float l = 0;
 
-        }  else { 
-
-
-        int time_res = 20;
-
-        float dt = uniforms.delta_time / time_res;
-
-            for(int i = 0; i < time_res; i++) {
-                float l = 0;
-
-                for(int i = -1; i <= 1; i++) {
-                    for(int j = -1; j <= 1; j++) {
-                        l += imageLoad(img, ivec2(pos.x + i, pos.y + j)).x * laplacian[i+1][j+1]; 
-                    }
-                }
-
-                vec4 pixel = imageLoad(img, pos);
-
-                pixel.y += (1000*l - 0.2 * pixel.y) * dt;
-                
-                if(ivec2(uniforms.touch_coords * bounds) == pos) {
-                    pixel.y += uniforms.touch_force * dt * 2000;
-                } 
-
-                pixel.x += pixel.y * dt;
-
-                memoryBarrierShared(); barrier();
-
-                
-                imageStore(img, pos, pixel);
+        for(int i = -1; i <= 1; i++) {
+            for(int j = -1; j <= 1; j++) {
+                l += imageLoad(back_buf, ivec2(pos.x + i, pos.y + j)).x * laplacian[i+1][j+1]; 
             }
-            
-            }
+        }
+
+        vec4 pixel = imageLoad(back_buf, pos);
+
+        pixel.y += (10000*l - 0.1 * pixel.y) * uniforms.delta_time;
+        
+        if(length(uniforms.touch_coords - vec2(pos) / vec2(bounds)) < 0.005 )  {
+            pixel.y += 500 * uniforms.touch_force * uniforms.delta_time;
+        } 
+
+        pixel.x += pixel.y * uniforms.delta_time;
+
+        imageStore(render_buf, pos, pixel);
 
     }
 }
