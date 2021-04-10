@@ -21,6 +21,7 @@ use vulkano::{
     sync::{self, FlushError, GpuFuture},
 };
 use vulkano_win::VkSurfaceBuild;
+use winit::monitor::VideoMode;
 use winit::{
     event::{ElementState, Event, KeyboardInput, MouseButton, VirtualKeyCode, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
@@ -76,8 +77,8 @@ const SCREEN_QUAD: [Vertex; 6] = [
     Vertex::new(1., 1.),
 ];
 
-const IMAGE_RESOLUTION: u32 = 1;
-const TIME_STEPS_PER_FRAME: u32 = 40;
+const IMAGE_RESOLUTION: u32 = 4;
+const TIME_STEPS_PER_FRAME: u32 = 10;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let instance = {
@@ -93,18 +94,23 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let events_loop = EventLoop::new();
 
-    let size = events_loop
+    let mode = events_loop
         .primary_monitor()
         .ok_or("no monitor found")?
-        .size();
+        .video_modes()
+        .max_by(|m1, m2| Ord::cmp(&m1.size().height, &m2.size().height))
+        .ok_or("no resolution found")?;
 
     let surface = WindowBuilder::new()
-        .with_inner_size(size)
-        .with_fullscreen(Some(Fullscreen::Borderless(events_loop.primary_monitor())))
+        .with_inner_size(mode.size())
+        .with_min_inner_size(mode.size())
+        .with_fullscreen(Some(Fullscreen::Exclusive(mode)))
         .with_title("Wave Equation (Click and Drag to apply force to pixels)")
         .build_vk_surface(&events_loop, instance.clone())?;
 
     let dimensions: [u32; 2] = surface.window().inner_size().into();
+
+    dbg!(dimensions);
 
     let caps = surface
         .capabilities(physical)
@@ -152,7 +158,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             SurfaceTransform::Identity,
             alpha,
             PresentMode::Fifo,
-            FullscreenExclusive::Default,
+            FullscreenExclusive::Allowed,
             true,
             ColorSpace::SrgbNonLinear,
         )
@@ -377,9 +383,6 @@ fn main() -> Result<(), Box<dyn Error>> {
                 recreate_swapchain = false;
             }
 
-            wave_pos[0] += (mouse_pos[0] - wave_pos[0]) * delta_time.as_secs_f32() * 3.;
-            wave_pos[1] += (mouse_pos[1] - wave_pos[1]) * delta_time.as_secs_f32() * 3.;
-
             let (image_num, suboptimal, acquire_future) =
                 match swapchain::acquire_next_image(swapchain.clone(), None) {
                     Ok(r) => r,
@@ -407,7 +410,13 @@ fn main() -> Result<(), Box<dyn Error>> {
                 delta_time: delta_time.as_secs_f32() / TIME_STEPS_PER_FRAME as f32,
                 init_image: clear_images as _,
                 touch_coords: wave_pos,
-                touch_force: if mouse_pressed { force_mult } else { 0. },
+                touch_force: if mouse_pressed {
+                    100000. * force_mult
+                } else {
+                    0.
+                },
+                wave_speed: 100.,
+                damping: 0.01,
             };
 
             let render_set = Arc::new(
@@ -450,6 +459,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                         vec![],
                     )
                     .unwrap();
+
+                wave_pos[0] += (mouse_pos[0] - wave_pos[0]) * delta_time.as_secs_f32() * 100.
+                    / TIME_STEPS_PER_FRAME as f32;
+                wave_pos[1] += (mouse_pos[1] - wave_pos[1]) * delta_time.as_secs_f32() * 100.
+                    / TIME_STEPS_PER_FRAME as f32;
 
                 mem::swap(&mut render_image, &mut back_image);
             }

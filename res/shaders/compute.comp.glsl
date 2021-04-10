@@ -13,7 +13,10 @@ layout(push_constant) uniform PushConstantData {
     bool init_image;
     vec2 touch_coords;
     float touch_force;
-} uniforms;
+    float wave_speed;
+    float damping;
+
+} u;
 
 layout(set = 0, binding = 0, rg32f) uniform image2D back_buf;
 layout(set = 0, binding = 1, rg32f) uniform image2D render_buf;
@@ -24,7 +27,7 @@ void main() {
     ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
     ivec2 bounds = imageSize(back_buf);
 
-    if(uniforms.init_image) {
+    if(u.init_image) {
         imageStore(render_buf, pos, vec4(0));
         imageStore(back_buf, pos, vec4(0));
     } else if(pos.x > 0 && pos.y > 0 && pos.x < bounds.x-1 && pos.y < bounds.y-1) {
@@ -39,13 +42,13 @@ void main() {
 
         vec4 pixel = imageLoad(back_buf, pos);
 
-        pixel.y += (10000*l - 0.1 * pixel.y) * uniforms.delta_time;
+        pixel.y += (u.wave_speed*u.wave_speed*l - u.damping * pixel.y) * u.delta_time;
         
-        if(length(uniforms.touch_coords - vec2(pos) / vec2(bounds)) < 0.005 )  {
-            pixel.y += 500 * uniforms.touch_force * uniforms.delta_time;
+        if(ivec2(u.touch_coords * bounds) == pos)  {
+            pixel.y += u.touch_force * u.delta_time;
         } 
 
-        pixel.x += pixel.y * uniforms.delta_time;
+        pixel.x += pixel.y * u.delta_time;
 
         imageStore(render_buf, pos, pixel);
 
